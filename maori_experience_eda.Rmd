@@ -1,0 +1,424 @@
+---
+title: "Maori Cultural Experience EDA"
+author: "Timotius Marselo"
+date: "2024-09-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+First, we will only use data after 2023 for our analysis because COVID might introduce anomalies.
+
+Select unique response_id for 2023 afterwards from the survey main header. We will use this to filter all the other datasets.
+```{r}
+smh_df <- read.csv("views/survey_main_header.csv")
+  
+response_ids <- smh_df %>% 
+  filter(year >= 2023) %>%
+  select(response_id) %>% 
+  distinct()
+```
+
+```{r}
+dim(response_ids)
+```
+There are 12426 response_id for 2023 afterwards.
+
+This csv contains the participation of each response_id in Maori cultural activity. There could be duplicated response_id if the respondent participated in more than one type of activity.
+```{r}
+mce_df <- read.csv("views/maori_cultural_experience.csv") %>% 
+  filter(response_id %in% response_ids$response_id)
+```
+
+```{r}
+head(mce_df)
+```
+Check for missing value
+```{r}
+colSums(is.na(mce_df))
+```
+Check value count of experience
+```{r}
+mce_df %>% 
+  count(experience)
+```
+
+Check number of unique reponse_id
+```{r}
+mce_df %>% 
+  distinct(response_id) %>% 
+  count()
+```
+Plot the count of experience in various activities. Note that one tourist can participate in more than one activity.
+```{r}
+mce_df %>% 
+  ggplot( 
+       aes(y = experience,
+           )) +
+  geom_bar() +
+  geom_text(stat='count', 
+            aes(label = after_stat(count),
+                x = after_stat(count) + 300)
+                ) +
+  labs(title = "International Tourist's Maori Cultural Experience",
+       subtitle = "The count of tourist that experienced the corresponding Maori
+cultural activity.",
+       y = "Maori cultural activity",
+       x = "Count") +
+  theme_minimal() 
+```
+From 9849 response_id, 5899 of them did not experience any Maori cultural activity.
+
+Make a classification whether the respondent has experienced at least one Maori cultural activity
+```{r}
+experienced_df <- mce_df %>% 
+  group_by(response_id) %>% 
+  summarise(experienced_maori = 0)
+
+# get the response_id that has experienced at least one Maori cultural activity
+experienced_id <- mce_df %>% 
+  filter(experience != "None of these") %>% 
+  group_by(response_id) %>% 
+  pull(response_id)
+
+# assign 1 for responed_id obtained in the previous step
+experienced_df <- experienced_df %>% 
+  mutate(experienced_maori = ifelse(response_id %in% experienced_id, 1, 0))
+```
+
+```{r}
+head(experienced_df)
+```
+Make plot to see the proportion of tourist that has experienced at least one activity during their visit. 
+```{r}
+experienced_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == 1, "Yes", "No")) %>%
+  ggplot( 
+       aes(x = after_stat(prop),
+           y = factor(experienced_maori), 
+               group=1)) +
+  geom_bar() +
+  geom_text(stat='count', 
+            aes(label = round(after_stat(prop), 3),
+                x = after_stat(prop) + 0.02)
+                ) +
+  labs(title = "NZ International Tourist Participation in Maori Cultural Activity",
+       subtitle = "Wheter or not the tourist has experienced at least one Maori cultural activity during their visit",
+       x = "Proportion",
+       y = "Participation") +
+  theme_minimal() 
+```
+Around 60% of the tourist that come to NZ did not do any activity related to Maori culture. We will investigate the difference between the two groups.
+
+This CSV contains the sentiment of the tourist towards Maori culture. experience_more_maori_culture is asked to all respondents, while improve_maori_culture_understanding and enjoy_maori_culture_experience are only asked to respondent who participate in at least one activity.
+```{r}
+mcs_df <- read.csv("views/maori_cultural_sentiment.csv") %>% 
+  filter(response_id %in% response_ids$response_id)
+```
+
+```{r}
+head(mcs_df)
+```
+Check missing value
+```{r}
+colSums(is.na(mcs_df))
+```
+The missing value in improve_maori_culture_understanding and enjoy_maori_culture_experience are expected because not everyone were asked about it.
+
+Plot the proportion of sentiment "experience_more_maori_culture"
+```{r}
+mcs_df %>% 
+  ggplot( 
+       aes(x = after_stat(prop),
+           y = experience_more_maori_culture, 
+               group=1)) +
+  geom_bar() +
+  geom_text(aes
+            (label = round(after_stat(prop), 3),
+              x = after_stat(prop) + 0.03),
+            stat = "count") +
+  labs(title = "NZ International Tourist Interest in Experiencing More Maori Culture",
+       subtitle = "Tourists opinion in the following statement: 'I would have liked to experience 
+more of Māori culture while in NZ.'",
+       x = "Proportion",
+       y = "Opinion") +
+  theme_minimal() 
+```
+Now let's check the proportion of "experience_more_maori_culture" sentiment between both groups (0: did not participate in any Maori cultural activity; 1: participated in at least one Maori cultural activity)
+```{r}
+merged_df <- response_ids %>% 
+  left_join(mcs_df, by = "response_id") %>% 
+  left_join(experienced_df, by = "response_id")
+
+tabulation <- table(merged_df$experience_more_maori_culture, merged_df$experienced_maori)
+
+# show as percentage
+prop.table(tabulation, margin=2)
+```
+Those who experienced Maori cultural activity (group 1) are more likely to be interested in experiencing more of it during their travel (higher proportion of agree).
+
+This dataset contains some health problem that the tourists have.
+```{r}
+mob_df <- read.csv("views/mobility.csv") %>% 
+  filter(response_id %in% response_ids$response_id)
+
+head(mob_df)
+```
+Check the rating distribution for each difficulty
+```{r}
+mob_df %>% 
+  group_by(mobility_difficulty, rating) %>% 
+  summarise(n = n()) 
+```
+
+Pivot the df to wide format to allow for easier analysis
+```{r}
+wide_mob_df <- mob_df %>%
+  pivot_wider(
+    names_from = mobility_difficulty,
+    values_from = rating
+  )
+
+colnames(wide_mob_df) <- c("response_id", "hearing", "memory_concentration", "vision", "walking")
+```
+
+```{r}
+merged_df <- merged_df %>% 
+  left_join(wide_mob_df, by = "response_id")
+```
+
+
+```{r}
+merged_df
+```
+
+Check the proportion of tourists that experienced Maori cultural activity grouped by the difficulty rating
+```{r}
+cols = c("hearing", "memory_concentration", "vision", "walking")
+for (col in cols) {
+  result <- merged_df %>% 
+    group_by_at(col) %>%
+    summarise(mean(experienced_maori, na.rm = TRUE),
+              count = n())
+  
+  print(result)
+}
+```
+Seems like people who have difficulties in hearing, memory and walking are more likely to experience Maori culture. This is quite surprising, but perhaps people who don't have difficulties are more likely to prefer other activities.
+
+This dataset covers with whom the tourist travelled with. Note that the response_id could be duplicated.
+```{r}
+tp_df <- read.csv("views/travel_party.csv") %>% 
+  filter(response_id %in% response_ids$response_id)
+```
+
+Check value count
+```{r}
+tp_df %>% 
+  group_by(travelled_with) %>% 
+  summarise(n = n())
+```
+
+Check missing value
+```{r}
+colSums(is.na(tp_df))
+```
+Convert the travelled_with column into one hot encoding
+```{r}
+tp_df_ohe <- tp_df %>% 
+  mutate(travelled_alone = ifelse(travelled_with == "No one, I was on my own", 1, 0),
+         travelled_with_partner = ifelse(travelled_with == "My husband, wife or partner", 1, 0),
+         travelled_with_child_over_15 = ifelse(travelled_with == "Child/children aged 15 or older", 1, 0),
+         travelled_with_child_under_15 = ifelse(travelled_with == "Child/children aged under 15", 1, 0),
+         travelled_with_adult_family = ifelse(travelled_with == "Other adult family / relative", 1, 0),
+         travelled_with_adult_non_family = ifelse(travelled_with == "Other adult(s) who are not family / relatives", 1, 0)) %>% 
+  select(-travelled_with) %>%
+  group_by(response_id) %>%
+  # we use sum here just to merge the duplicated response_id, could use max as well
+  summarise(across(starts_with("travelled"), sum))
+```
+
+```{r}
+merged_df <- merged_df %>% 
+  left_join(tp_df_ohe, by = "response_id")
+```
+
+Check the proportion of tourists that experienced Maori cultural activity grouped by the "travelled_with"
+```{r}
+travelled_cols <- tp_df_ohe %>% 
+  select(starts_with("travelled")) %>% 
+  colnames()
+
+for (col in travelled_cols) {
+  result <- merged_df %>% 
+    group_by_at(col) %>%
+    summarise(mean(experienced_maori, na.rm = TRUE),
+              count = n())
+  
+  print(result)
+}
+```
+People who travel alone is less likely to experience Maori cultural activity, while people who travel with other adult (including partner and child over 15) is more likely to experience Maori cultural activity. Later we will group this into:
+1. Travel alone (baseline)
+2. Travel with child under 15 (OHE-column)
+3. Travel with other adult (OHE-column)
+
+This dataset contains the information if the tourist drive themselves in NZ
+```{r}
+transport_df <- read.csv("views/self_transport.csv") %>% 
+  filter(response_id %in% response_ids$response_id)
+transport_df
+```
+
+Check missing value
+```{r}
+colSums(is.na(transport_df))
+```
+Check value count
+```{r}
+transport_df %>% 
+  count(drive_yourself)
+```
+
+```{r}
+merged_df <- merged_df %>% 
+  left_join(transport_df, by = "response_id") %>% 
+  select(-driving_information)
+```
+
+```{r}
+merged_df %>% 
+  group_by(drive_yourself) %>% 
+  summarise(mean(experienced_maori, na.rm = TRUE),
+              count = n())
+```
+People who drive their own vehicle are more likely to experience Maori culture. Perhaps this is related to the reachability of place for Maori activity. We need to investigate the missing values for drive_yourself later.
+
+Choose some important variables from the survey main header.
+```{r}
+cols = c("response_id", "year", "qtr", "country_of_residence_group", "gender", "first_nz_trip", "purpose_of_visit_main", "purpose_subtype", "no_days_in_nz", "age_range", "visited_ni", "visited_si", "main_transport_type")
+
+smh_df <- read.csv("views/survey_main_header.csv") %>% 
+  filter(response_id %in% response_ids$response_id)
+smh_df <- smh_df[, cols]
+```
+
+Check value count for year, qtr, country_of_residence_group, gender, first_nz_trip, purpose_of_visit_main, purpose_subtype, age_range, visited_ni, visited_si, main_transport_type
+
+```{r}
+check_cols <- c("year", "qtr", "country_of_residence_group",
+                "gender", "first_nz_trip", "purpose_of_visit_main",
+                "purpose_subtype", "age_range", "visited_ni",
+                "visited_si", "main_transport_type")
+
+for (col in check_cols){
+  print(smh_df %>% 
+          group_by_at(col) %>% 
+          summarise(n = n()))
+}
+```
+
+the visited_si and visited_ni columns are not consitent, so we will process them first.
+
+```{r}
+head(smh_df[, c("visited_ni", "visited_si")])
+tail(smh_df[, c("visited_ni", "visited_si")])
+```
+
+```{r}
+smh_df <- smh_df %>% 
+  mutate(visited_ni = case_when(visited_ni == "Visited the North Island" ~ "1",
+                                is.na(visited_ni) ~ "0",
+                                TRUE ~ visited_ni),
+         visited_si = case_when(visited_si == "Visited the South Island" ~ "1",
+                                is.na(visited_si) ~ "0",
+                                TRUE ~  visited_si)
+  )
+```
+
+```{r}
+smh_df <- smh_df %>% 
+  mutate(visited_ni = as.integer(visited_ni),
+         visited_si = as.integer(visited_si))
+```
+
+```{r}
+both_zero <- smh_df$visited_ni == 0 & smh_df$visited_si == 0
+smh_df[both_zero,]
+```
+We don't expect a row to have null value for both visited_ni and visited_si, because they should visit at least north or south island. Maybe the respondent did not answer the question, so we will replace them with NA.
+
+```{r}
+smh_df <- smh_df %>% 
+  mutate(visited_ni = ifelse(both_zero, NA, visited_ni),
+         visited_si = ifelse(both_zero, NA, visited_si))
+```
+
+
+Check for missing values
+```{r}
+colSums(is.na(smh_df))
+```
+Let's check the missing values one-by-one.
+```{r}
+smh_df %>% 
+  filter(is.na(purpose_subtype)) %>% 
+  group_by(purpose_of_visit_main) %>% 
+  summarise(n = n())
+```
+The missing values in purpose_subtype is only for purpose_of_visit_main = Business. We will fill them with Business.
+
+```{r}
+smh_df <- smh_df %>%
+  mutate(purpose_subtype = ifelse(is.na(purpose_subtype) & purpose_of_visit_main == "Business", 
+                                  "Business", 
+                                  purpose_subtype))
+```
+
+```{r}
+smh_df %>% 
+  filter(is.na(main_transport_type)) %>% 
+  group_by(year, qtr) %>% 
+  summarise(n = n())
+```
+
+Seems like the missing values in main_transport_type and drive_yourself are due to respondent not answering the question.
+
+```{r}
+null_response_id <- smh_df %>% 
+  filter(is.na(main_transport_type)) %>% 
+  select(response_id)
+```
+
+Double check with transport_methods.csv
+```{r}
+transport_methods <- read.csv("views/transport_methods.csv") %>% 
+  filter(response_id %in% response_ids$response_id)
+
+transport_methods %>% 
+  filter(response_id %in% null_response_id)
+```
+The missing value of main_transport_type is consistent with the missing response_id in transport_methods.csv.
+
+```{r}
+merged_df <- merged_df %>% 
+  left_join(smh_df, by = "response_id")
+
+head(merged_df)
+```
+Check if the quarter and year affect maori cultural activity experience
+```{r}
+merged_df %>% 
+  group_by(year, qtr) %>% 
+  summarise(mean(experienced_maori, na.rm = TRUE),
+            count = n())
+```
+Seems like the quarter has some effect toward the participation in Maori cultural activity.
+
+## TODO
+Explore these columns to see if they have association with participation in Maori cultural activity: gender, country_of_residence_group, first_nz_trip, purpose_of_visit_main, purpose_subtype, no_days_in_nz, age_range, visited_ni, visited_si, main_transport_type
+
+If they are important, do some feature engineering (e.g. grouping, one hot encoding, etc.) to make them suitable for modelling.
