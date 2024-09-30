@@ -10,15 +10,15 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 ```
 
-First, we will only use data after 2023 for our analysis because COVID might introduce anomalies.
+First, we will only use data on 2023 for our analysis because COVID might introduce anomalies.
 
-Select unique response_id for 2023 afterwards from the survey main header. We will use this to filter all the other datasets.
+Select unique response_id for 2023 from the survey main header. We will use this to filter all the other datasets.
 
 ```{r}
 smh_df <- read.csv("views/survey_main_header.csv")
   
 response_ids <- smh_df %>% 
-  filter(year >= 2023) %>%
+  filter(year == 2023) %>%
   select(response_id) %>% 
   distinct()
 ```
@@ -26,9 +26,6 @@ response_ids <- smh_df %>%
 ```{r}
 dim(response_ids)
 ```
-
-There are 12426 response_id for 2023 afterwards.
-
 This csv contains the participation of each response_id in Maori cultural activity. There could be duplicated response_id if the respondent participated in more than one type of activity.
 
 ```{r}
@@ -88,7 +85,7 @@ Make a classification whether the respondent has experienced at least one Maori 
 ```{r}
 experienced_df <- mce_df %>% 
   group_by(response_id) %>% 
-  summarise(experienced_maori = "0")
+  summarise(experienced_maori = "No")
 
 # get the response_id that has experienced at least one Maori cultural activity
 experienced_id <- mce_df %>% 
@@ -96,9 +93,9 @@ experienced_id <- mce_df %>%
   group_by(response_id) %>% 
   pull(response_id)
 
-# assign 1 for responed_id obtained in the previous step
+# assign yes for response_id obtained in the previous step
 experienced_df <- experienced_df %>% 
-  mutate(experienced_maori = ifelse(response_id %in% experienced_id, "1", "0"))
+  mutate(experienced_maori = ifelse(response_id %in% experienced_id, "Yes", "No"))
 ```
 
 ```{r}
@@ -109,7 +106,6 @@ Make plot to see the proportion of tourist that has experienced at least one act
 
 ```{r}
 experienced_df %>% 
-  mutate(experienced_maori = ifelse(experienced_maori == "1", "Yes", "No")) %>%
   ggplot( 
        aes(x = after_stat(prop),
            y = experienced_maori, 
@@ -227,8 +223,9 @@ Check the proportion of tourists that experienced Maori cultural activity groupe
 cols = c("hearing", "memory_concentration", "vision", "walking")
 for (col in cols) {
   result <- merged_df %>% 
+    mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>% 
     group_by_at(col) %>%
-    summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
+    summarise(mean(experienced_maori, na.rm = TRUE),
               count = n())
   
   print(result)
@@ -272,7 +269,9 @@ tp_df_ohe <- tp_df %>%
   group_by(response_id) %>%
   # we use sum here just to merge the duplicated response_id, could use max as well
   summarise(across(starts_with("travelled"), sum)) %>% 
-  mutate(across(starts_with("travelled"), as.character))
+  # convert 1 to "Yes" and 0 to "No"
+  mutate(across(starts_with("travelled"),  ~ ifelse(. == 1, "Yes", "No"))
+         )
 ```
 
 ```{r}
@@ -288,8 +287,9 @@ travelled_cols <- merged_df %>%
 
 for (col in travelled_cols) {
   result <- merged_df %>% 
+    mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>% 
     group_by_at(col) %>%
-    summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
+    summarise(mean(experienced_maori, na.rm = TRUE),
               count = n())
   
   print(result)
@@ -327,8 +327,9 @@ merged_df <- merged_df %>%
 
 ```{r}
 merged_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>% 
   group_by(drive_yourself) %>% 
-  summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
+  summarise(mean(experienced_maori, na.rm = TRUE),
               count = n())
 ```
 
@@ -374,21 +375,21 @@ smh_df[both_zero | both_na,]
 ```
 We don't expect a row to have null (or zero) value for both visited_ni and visited_si, because they should visit at least north or south island. Maybe the respondent did not answer the question, so we will replace them with NA later.
 
-First we will standardize the visited_ni and visited_si columns to "1" and "0".
+First we will standardize the visited_ni and visited_si columns to "Yes" and "No".
 ```{r}
 smh_df <- smh_df %>% 
-  mutate(visited_ni = case_when(visited_ni == "Visited the North Island" ~ "1",
-                                is.na(visited_ni) ~ "0",
-                                TRUE ~ visited_ni),
-         visited_si = case_when(visited_si == "Visited the South Island" ~ "1",
-                                is.na(visited_si) ~ "0",
-                                TRUE ~  visited_si)
+  mutate(visited_ni = case_when(visited_ni == "Visited the North Island" ~ "Yes",
+                                visited_ni =="1" ~ "Yes",
+                                TRUE ~ "No"),
+         visited_si = case_when(visited_si == "Visited the South Island" ~ "Yes",
+                                visited_si == "1" ~ "Yes",
+                                TRUE ~ "No")
   )
 ```
 
-if both visited_ni and visited_si are 0, replace them with NA
+if both visited_ni and visited_si are No, replace them with NA
 ```{r}
-both_zero <- smh_df$visited_ni == "0" & smh_df$visited_si == "0"
+both_zero <- smh_df$visited_ni == "No" & smh_df$visited_si == "No"
 
 smh_df <- smh_df %>% 
   mutate(visited_ni = ifelse(both_zero, NA, visited_ni),
@@ -446,10 +447,8 @@ transport_methods %>%
 
 The missing value of main_transport_type is consistent with the missing response_id in transport_methods.csv.
 
-
-
+Check median of spend to compare it with the data in MBIE dashboard
 ```{r}
-# check median of spend 
 smh_df %>% 
   summarise(median(treated_spend, na.rm = TRUE))
 ```
@@ -467,8 +466,9 @@ Check if the quarter and year affect maori cultural activity experience
 
 ```{r}
 merged_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
   group_by(year, qtr) %>% 
-  summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
+  summarise(mean(experienced_maori, na.rm = TRUE),
             count = n())
 ```
 
@@ -476,102 +476,143 @@ Seems like the quarter has some effect toward the participation in Maori cultura
 
 ```{r}
 merged_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
   group_by(gender) %>% 
-  summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
+  summarise(mean(experienced_maori, na.rm = TRUE),
             count = n())
 ```
 
 ```{r}
 merged_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
   group_by(country_of_residence_group) %>% 
-  summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
+  summarise(mean(experienced_maori, na.rm = TRUE),
             count = n())
 ```
 
 ```{r}
 merged_df %>% 
-  group_by(first_nz_trip) %>% 
-  summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  group_by(first_nz_trip) %>%
+  summarise(mean(experienced_maori, na.rm = TRUE),
             count = n())
 ```
 
 ```{r}
 merged_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
   group_by(purpose_of_visit_main) %>% 
-  summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
+  summarise(mean(experienced_maori, na.rm = TRUE),
             count = n())
 ```
 
 ```{r}
 merged_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
   group_by(purpose_subtype) %>% 
-  summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
+  summarise(mean(experienced_maori, na.rm = TRUE),
             count = n())
 ```
 
 ```{r}
 merged_df %>% 
-  group_by(experienced_maori) %>% 
-  summarise(mean(no_days_in_nz, na.rm = TRUE),
-            count = n())
-```
-
-```{r}
-merged_df %>% 
-  group_by(age_range) %>% 
-  summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
-            count = n())
-```
-
-
-```{r}
-merged_df %>% 
-  # visit both ni and si
-  group_by(visited_ni, visited_si) %>%
-  summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
-            count = n())
-```
-
-```{r}
-merged_df %>% 
-  group_by(visited_ni) %>% 
-  summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
-            count = n())
-```
-
-```{r}
-merged_df %>% 
-  group_by(visited_si) %>% 
-  summarise(mean(as.numeric(experienced_maori), na.rm = TRUE),
-            count = n())
-```
-
-```{r}
-merged_df %>% 
-  group_by(experienced_maori) %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  group_by(experienced_maori) %>%
   summarise(median(treated_spend, na.rm = TRUE),
             count = n())
 ```
 
 ```{r}
-# check for drive_yourself is null but main_transport_type is not null
+merged_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  group_by(age_range) %>% 
+  summarise(mean(experienced_maori, na.rm = TRUE),
+            count = n())
+```
+
+
+```{r}
+merged_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  group_by(visited_ni, visited_si) %>%
+  summarise(mean(experienced_maori, na.rm = TRUE),
+            count = n())
+```
+
+```{r}
+merged_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  group_by(visited_ni) %>%
+  summarise(mean(experienced_maori, na.rm = TRUE),
+            count = n())
+```
+
+```{r}
+merged_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  group_by(visited_si) %>%
+  summarise(mean(experienced_maori, na.rm = TRUE),
+            count = n())
+```
+
+```{r}
+merged_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  group_by(experienced_maori) %>%
+  summarise(median(no_days_in_nz, na.rm = TRUE),
+            count = n())
+```
+
+Check the relationship between r drive_yourself and main_transport_type 
+```{r}
 merged_df %>% 
   filter(is.na(drive_yourself) & !is.na(main_transport_type)) %>% 
   group_by(main_transport_type) %>%
   summarise(count = n()) %>% 
   arrange(desc(count))
 ```
-
 ```{r}
 merged_df %>% 
-  filter(drive_yourself == "Yes") %>% 
+  filter(drive_yourself == "Yes" 
+         ) %>%
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
   group_by(main_transport_type) %>%
-  summarise(count = n()) %>% 
+  summarise(mean(experienced_maori, na.rm = TRUE),
+            count = n()) %>%
+  arrange(desc(count))
+```
+```{r}
+merged_df %>% 
+  filter(drive_yourself == "No" 
+         ) %>% 
+  
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  group_by(main_transport_type) %>%
+  summarise(mean(experienced_maori, na.rm = TRUE),
+            count = n()) %>% 
   arrange(desc(count))
 ```
 
 ```{r}
-# clean the dataset
+merged_df %>% 
+  filter(is.na(drive_yourself)) %>%
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  group_by(main_transport_type) %>%
+  summarise(mean(experienced_maori, na.rm = TRUE),
+            count = n()) %>%
+  arrange(desc(count))
+```
+
+```{r}
+merged_df %>% 
+  group_by(main_transport_type) %>%
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  summarise(mean(experienced_maori, na.rm = TRUE),
+            count = n()) %>%
+  arrange(desc(count))
+```
+Clean the final dataset
+```{r}
 clean_df <- merged_df %>% 
   select(c(response_id, experienced_maori, travelled_alone, travelled_with_partner,
            travelled_with_child_over_15, travelled_with_child_under_15,
@@ -581,34 +622,33 @@ clean_df <- merged_df %>%
            response_id, treated_spend))
 ```
 
+Group travel to alone, with child under 15, and with other adult. This is to reduce the cardinality
 ```{r}
-# group travel to alone, with child under 15, and with other adult
 clean_df <- clean_df %>% 
-  mutate(travelled_with_other_above_15 = ifelse(travelled_with_adult_family == "1" | 
-                                         travelled_with_adult_non_family == "1" | 
-                                         travelled_with_partner == "1" | 
-                                         travelled_with_child_over_15 == "1", "1", "0")) %>%
+  mutate(travelled_with_other_above_15 = ifelse(travelled_with_adult_family == "Yes" | 
+                                         travelled_with_adult_non_family == "Yes" | 
+                                         travelled_with_partner == "Yes" | 
+                                         travelled_with_child_over_15 == "Yes", 
+                                         "Yes", "No")) %>%
   select(-c(travelled_with_adult_family, travelled_with_adult_non_family, 
             travelled_with_partner, travelled_with_child_over_15))
 ```
 
+We can deduce travel_alone from the other two columns, so we will drop it
+i.e. travel_alone will be 1 if both travel_with_child_under_15 and travel_with_other_above_15 are 0
 ```{r}
-# we can deduce travel_alone from the other two columns, so we will drop it
-# i.e. travel_alone will be 1 if both travel_with_child_under_15 and travel_with_other_above_15 are 0
 clean_df <- clean_df %>% 
   select(-travelled_alone)
 ```
 
 ```{r}
-# value count age_range 
 clean_df %>% 
   select(age_range) %>% 
   group_by(age_range) %>% 
   summarise(n = n())
 ```
-
+Convert age to numerical by taking the middle number of the range.
 ```{r}
-# convert age_range to numerical
 age_map <- c("20 - 24" = 22, 
              "25 - 29" = 27, 
              "30 - 34" = 32,
@@ -626,13 +666,8 @@ age_map <- c("20 - 24" = 22,
 clean_df <- clean_df %>%
   mutate(age_range = recode(age_range, !!!age_map))
 ```
-```{r}
-# convert 
-head(clean_df)
-```
 
 ```{r}
-# count value for purpose_of_visit_main
 clean_df %>%
   select(purpose_of_visit_main) %>% 
   group_by(purpose_of_visit_main) %>% 
@@ -640,15 +675,118 @@ clean_df %>%
   arrange(desc(n))
 ```
 
+
+Change the value of purpose_of_visit_main "Conference / convention" to "Other" to reduce cardinality.
 ```{r}
-# count value for country_of_residence_group
+clean_df <- clean_df %>% 
+  mutate(purpose_of_visit_main = ifelse(purpose_of_visit_main == "Conference / convention", "Other", purpose_of_visit_main))
+```
+
+Make new column visited_island to represent information from both columns
+```{r}
+clean_df <- clean_df %>% 
+  mutate(visited_island = case_when(visited_ni == "Yes" & visited_si == "Yes" ~ "Both",
+                                   visited_ni == "Yes" & visited_si == "No" ~ "North",
+                                   visited_ni == "No" & visited_si == "Yes" ~ "South",
+                                   TRUE ~ NA)) 
+```
+
+```{r}
+clean_df <- clean_df %>% 
+  select(-c(visited_ni, visited_si))
+```
+
+Regroup country_of_residence_group by taking into account both region and the mean of experienced_maori
+```{r}
+clean_df <- clean_df %>%
+  mutate(country_of_residence_group = case_when(
+    country_of_residence_group %in% c("Australia", "Rest of Oceania") ~ "Oceania",
+    country_of_residence_group %in% c("UK", "Germany", "Rest of Europe") ~ "Europe",
+    country_of_residence_group %in% c("Japan", "China", "Korea, Republic of", "Rest of Asia") ~ "Asia",
+    country_of_residence_group %in% c("USA", "Canada", "Rest of Americas") ~ "Americas",
+    country_of_residence_group == "Africa and Middle East" ~ "Africa and Middle East",
+    TRUE ~ NA
+  ))
+```
+
+```{r}
 clean_df %>% 
   select(country_of_residence_group) %>% 
   group_by(country_of_residence_group) %>% 
   summarise(n = n()) %>% 
   arrange(desc(n))
 ```
+Check total number of rows
+```{r}
+dim(clean_df)
+```
 
-## TODO
+Check null value for each column
+```{r}
+colSums(is.na(clean_df))
+```
 
-subset for those visited north island
+```{r}
+clean_df <- clean_df %>% 
+  filter(!is.na(experienced_maori))
+print(dim(clean_df))
+```
+
+
+```{r}
+clean_df <- clean_df %>% 
+  filter(!is.na(age_range))
+print(dim(clean_df))
+```
+
+
+```{r}
+clean_df <- clean_df %>% 
+  filter(!is.na(visited_island))
+print(dim(clean_df))
+```
+
+
+```{r}
+clean_df <- clean_df %>% 
+  filter(
+    gender %in% c("Male", "Female")
+  )
+print(dim(clean_df))
+```
+
+```{r}
+clean_df <- clean_df %>% 
+  filter(
+    drive_yourself %in% c("Yes", "No")
+  )
+print(dim(clean_df))
+```
+```{r}
+clean_df <- clean_df %>% 
+  mutate(qtr = as.factor(qtr))
+```
+
+```{r} 
+colSums(is.na(clean_df))
+```
+
+```{r}
+colnames(clean_df)
+```
+```{r}
+head(clean_df)
+```
+```{r}
+# check value count for each column except for response_id, no_days_in_nz, treated_spend
+check_cols <- colnames(clean_df)
+check_cols <- check_cols[!check_cols %in% c("response_id", "no_days_in_nz", "treated_spend")]
+
+for (col in check_cols){
+  print(clean_df %>% 
+          group_by_at(col) %>% 
+          summarise(n = n()) %>%
+          arrange(desc(n)))
+}
+```
+
