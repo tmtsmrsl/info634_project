@@ -302,7 +302,11 @@ This dataset contains the information if the tourist drive themselves in NZ
 
 ```{r}
 transport_df <- read.csv("views/self_transport.csv") %>% 
-  filter(response_id %in% response_ids$response_id)
+  filter(response_id %in% response_ids$response_id) %>% 
+  select(response_id, drive_yourself) %>% 
+  # there are duplicates in raw data
+  distinct()
+
 transport_df
 ```
 
@@ -318,11 +322,9 @@ Check value count
 transport_df %>% 
   count(drive_yourself)
 ```
-
 ```{r}
 merged_df <- merged_df %>% 
-  left_join(transport_df, by = "response_id") %>% 
-  select(-driving_information)
+  left_join(transport_df, by = "response_id")
 ```
 
 ```{r}
@@ -732,7 +734,6 @@ clean_df <- clean_df %>%
 print(dim(clean_df))
 ```
 
-
 ```{r}
 clean_df <- clean_df %>% 
   filter(!is.na(age_range))
@@ -789,4 +790,3 @@ for (col in check_cols){
           arrange(desc(n)))
 }
 ```
-

@@ -59,8 +59,9 @@ tp_df <- read.csv("views/travel_party.csv") %>%
 # This dataset contains the information if the tourist drive themselves in NZ.
 transport_df <- read.csv("views/self_transport.csv") %>% 
   filter(response_id %in% response_ids$response_id) %>% 
-  # this columns is unnecessary for our purpose
-  select(-driving_information) 
+  select(response_id, drive_yourself) %>% 
+  # there are duplicates in raw data
+  distinct()
 
 # Select some of the important columns from the survey main header.
 cols = c("response_id", "qtr", "country_of_residence_group", "gender", 
