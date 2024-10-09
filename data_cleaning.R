@@ -51,9 +51,9 @@ tp_df <- read.csv("views/travel_party.csv") %>%
                travelled_with_child_over_15 == "Yes", 
              "Yes", "No")) %>%
   select(-c(travelled_with_adult_family, travelled_with_adult_non_family, 
-            travelled_with_partner, travelled_with_child_over_15)) %>% 
-  # drop the travel_alone column because we can deduce it from the other two columns
-  select(-travelled_alone)
+            travelled_with_partner, travelled_with_child_over_15)) 
+  # drop the travel_alone column later when building model
+  # select(-travelled_alone)
 
 
 # This dataset contains the information if the tourist drive themselves in NZ.
