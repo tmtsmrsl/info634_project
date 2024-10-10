@@ -1,0 +1,392 @@
+---
+title: "data_analysis"
+author: "Timotius Marselo"
+date: "2024-10-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(corrplot)
+library(lsr)
+library(glmnet)
+library(scales)
+```
+
+```{r}
+target <- "experienced_maori"
+cat_features <- c("travelled_alone",  "travelled_with_child_under_15", 
+                 "travelled_with_other_above_15", "drive_yourself", "qtr", 
+                 "country_of_residence_group", "gender", "first_nz_trip",
+                 "purpose_of_visit_main", "visited_island")
+num_features <- c("no_days_in_nz", "age_range", "treated_spend", "spend_per_day")
+
+df <- read.csv("merged_data.csv") %>% 
+  mutate_at(cat_features, as.factor) %>%
+  mutate_at(num_features, as.numeric)
+
+head(df)
+```
+
+```{r}
+# set the levels to improve interpretability of the model later
+# for target we set "Yes" as the first level, so it will be the positive class
+df$experienced_maori <- factor(df$experienced_maori, levels = c("Yes", "No"))
+df$travelled_alone <- factor(df$travelled_alone, levels = c("No", "Yes"))
+df$travelled_with_child_under_15 <- factor(df$travelled_with_child_under_15, levels = c("No", "Yes"))
+df$travelled_with_other_above_15 <- factor(df$travelled_with_other_above_15, levels = c("No", "Yes"))
+df$drive_yourself <- factor(df$drive_yourself, levels = c("No", "Yes"))
+df$qtr <- factor(df$qtr, levels = c(1, 2, 3, 4))  # Use ordered = TRUE if it's a ranking
+df$country_of_residence_group <- factor(df$country_of_residence_group, 
+                                        levels = c("Oceania", "Asia", "Africa and Middle East", "Americas", "Europe"))
+df$gender <- factor(df$gender, levels = c("Female", "Male"))  
+df$first_nz_trip <- factor(df$first_nz_trip, levels = c("No", "Yes"))
+df$purpose_of_visit_main <- factor(df$purpose_of_visit_main, 
+                                   levels = c("Business", "Visiting friends / relatives", "Other", "Holiday / vacation", "Education"))  
+df$visited_island <- factor(df$visited_island, levels = c("South", "North", "Both"))
+```
+
+```{r}
+# check for duplicated response id
+df %>%
+  group_by(response_id) %>%
+  filter(n() > 1)
+```
+
+```{r}
+# check for missing values
+df %>%
+  is.na() %>%
+  colSums()
+```
+
+```{r}
+# check distribution of numerical columns
+for (col in num_features) {
+  print(ggplot(df, aes_string(col)) + 
+          geom_histogram() +
+          theme_minimal() +
+          labs(title = paste("Distribution of", col)))
+}
+
+```
+no_days_in_nz, treated_spend and spend_per_day are right skewed, while age_range is bimodal.
+
+```{r}
+# check distribution of categorical columns
+for (col in c(cat_features, target)) {
+  print(ggplot(df, aes_string(col)) + 
+          geom_bar(aes(y = after_stat(prop), group=1)) +
+          coord_flip() +
+          theme_minimal() +
+          labs(title = paste("Distribution of", col)))
+}
+```
+There some low value categories in travelled_with_child_under_15 (Yes), country_of_residence_group (Africa and Middle East), purpose_of_visit_main (Business, Education and Other)
+
+```{r}
+# visualize relationship between numerical variables and experienced_maori
+# using boxplot and density plot
+for (col in num_features) {
+  print(ggplot(df, aes_string("experienced_maori", col)) + 
+          geom_boxplot() +
+          labs(title = paste("Distribution of", col, "by experienced_maori")))
+          
+}
+
+for (col in num_features) {
+  print(ggplot(df, aes_string(col, fill = "experienced_maori")) + 
+          geom_density(alpha = 0.5) +
+          labs(title = paste("Density plot of", col, "by experienced_maori")))
+}
+```
+
+There seems to be some difference in the distribution of no_days_in_nz, treated_spend and spend_per_day between experienced and non-experienced Maori.
+
+```{r}
+# visualize relationship between categorical variables and experienced_maori
+# using stakced bar chart with proportion
+
+for (col in cat_features) {
+  print(ggplot(df, aes_string(col, fill = "experienced_maori")) + 
+          geom_bar(position = "fill") +
+          coord_flip() +
+          labs(title = paste("Distribution of", col, "by experienced_maori"))) 
+}
+```
+
+We can see difference in proportion of experienced and non-experienced Maori in almost all categorical variables. The difference by gender, travelled_with_child_under_15, and qtr seems less pronounced.
+
+```{r}
+# check for multicollinearity between num features and
+# relationship between num features with target using Pearson correlation
+df <- df %>% 
+  mutate(ohe_experinced_maori = ifelse(experienced_maori == "Yes", 1, 0))
+
+num_var_cor <- cor(df[, c(num_features, "ohe_experinced_maori")]) 
+corrplot(num_var_cor, addCoef.col = "black", number.cex = 0.7, cl.cex = 0.7, tl.cex=0.7,cex.main=0.8, diag=FALSE, type="lower", title="Correlation Between Numerical Features and Target", mar=c(0, 0, 1, 0))
+
+df <- df %>% 
+  select(-ohe_experinced_maori)
+```
+The pairwise numerical features has correlation less than 0.7, so we assume no significant multicollinearity. We will drop age_range and spend_per_day for modelling because they have low correlation with the target variable.
+```{r}
+num_features <- setdiff(num_features, c("age_range", "spend_per_day"))
+num_features
+```
+```{r}
+cramers_v_matrix <- function(data) {
+  n <- ncol(data)
+  cramers_v <- matrix(NA, n, n)
+  colnames(cramers_v) <- colnames(data)
+  rownames(cramers_v) <- colnames(data)
+  
+  for (i in 1:n) {
+    for (j in i:n) {
+      tbl <- table(data[, i], data[, j])
+      cramers_v[i, j] <- cramersV(tbl)
+      cramers_v[j, i] <- cramers_v[i, j]  
+    }
+  }
+  return(cramers_v)
+}
+```
+
+```{r}
+# check for multicollinearity of categorical variables
+result <- cramers_v_matrix(df[c(cat_features, target)])
+
+# plot a correlation matrix
+corrplot(result, addCoef.col = "black", number.cex = 0.7, cl.cex = 0.7, tl.cex = 0.7, cex.main=0.7, diag=FALSE, type="lower", title="Cramers V Between Categorical Features and Target", mar=c(0, 0, 1, 0))
+```
+We can notice that travelled_alone and travelled_with_other_above_15 have a high correlation. This makes sense because if someone is not travelling alone, then they are travelling with others. Also the travelled_with_child_under_15 has 0 cramer's v with the target variable (experienced_maori), which means their relationship is weak. We will drop travelled_alone and travelled_with_child_under_15 for modelling. gender also has low correlation with the target variable, so we will drop it as well.
+
+```{r}
+# drop travelled_alone and travelled_with_child_under_15
+cat_features <- setdiff(cat_features, c("travelled_alone", "travelled_with_child_under_15", "gender"))
+
+# do log transformation because we have right skewed numerical variables
+log_num <- c("no_days_in_nz", "treated_spend")
+
+df_processed <- df %>% 
+  mutate_at(log_num, log1p)
+```
+
+```{r}
+# standardize the numerical variables so ridge regression can be trained properly
+df_processed <- cbind(df_processed[, c("experienced_maori", cat_features)], scale(df_processed[, num_features]))
+```
+
+```{r}
+# plot histogram of numerical variables after log transformation
+for (col in num_features) {
+  print(ggplot(df_processed, aes_string(col)) + 
+          geom_histogram())
+}
+```
+
+```{r}
+library(caret)
+set.seed(123)
+```
+
+```{r}
+# create cross validation setup
+train_control <- trainControl(method = "cv", 
+                              number = 10,
+                              classProbs = TRUE,
+                              savePredictions = "all",
+                              summaryFunction = twoClassSummary)
+```
+
+```{r}
+# train ridge regression model
+ridge_logreg_model <- train(experienced_maori ~ ., 
+               data = df_processed, 
+               method = "glmnet",            
+               family = "binomial",
+               trControl = train_control,
+               metric = "ROC",
+               tuneGrid = expand.grid(alpha = 0, lambda = c(0, 0.001, 0.01, 0.1, 1, 10)))
+```
+
+```{r}
+# show the results of the ridge regression model across different lambda values
+ridge_logreg_model$results %>% 
+  # select(alpha, lambda, ROC, Sens, Spec) %>% 
+  arrange(desc(ROC))
+```
+
+```{r}
+coefs <- coef(ridge_logreg_model$finalModel, s = 0)
+coefs <- as.numeric(coefs[-1])
+names(coefs) <- rownames(coef(ridge_logreg_model$finalModel, s = 0))[-1] 
+```
+
+```{r}
+# reverse the sign of the coefficients, to make the "no" target as a baseline
+coefs_df <- data.frame(coefs = coefs * -1, features = names(coefs))
+
+coefs_df %>%
+  ggplot(aes(x = reorder(features, coefs), y = coefs)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Coefficient for Logistic Regression (lambda = 0)", x = "Features", y = "Coefficient") +
+  theme_minimal()
+```
+```{r}
+cv_predictions <- ridge_logreg_model$pred
+
+best_cv_predictions <- cv_predictions %>% 
+  filter(lambda == 0) 
+```
+
+```{r}
+conf_matrix <- confusionMatrix(best_cv_predictions$pred, best_cv_predictions$obs)
+
+cm_table <- conf_matrix$table %>% 
+  as.data.frame()
+```
+
+
+```{r}
+cm_table %>%
+  ggplot(aes(x=Reference, y=Prediction, fill = Freq)) +
+    geom_tile(color = "black") +
+    geom_text(aes(label = Freq),color="black", size=5) +
+    scale_fill_gradient(low = "lightblue", high = "blue") +
+    labs(
+      title = "Confusion Matrix",
+      x = "Actual Class",
+      y = "Predicted Class"
+    ) +
+    theme_minimal()
+```
+```{r}
+# plot feature importance of the ridge regression model
+importance <- varImp(ridge_logreg_model, scale = TRUE)
+plot(importance, main = "Variable Importance for Ridge Logistic Regression")
+```
+```{r}
+library(pROC)
+
+roc_curve <- roc(best_cv_predictions$obs, best_cv_predictions$Yes)
+
+plot(roc_curve, 
+     main = "ROC Curve for Logistic Regression (lambda = 0)", 
+     col = "red", 
+     lwd = 2)
+
+auc_value <- auc(roc_curve)
+
+legend("bottomright", 
+       legend = paste("AUC =", round(auc_value, 3)),
+       bty = "n")  
+```
+```{r}
+# calculate fitted values (predicted probabilities)
+fitted_values <- as.numeric(best_cv_predictions$Yes)
+
+# Calculate residuals
+binary_obs <- ifelse(best_cv_predictions$obs == "Yes", 1, 0)
+residuals <- binary_obs - fitted_values
+```
+
+```{r}
+# Create the binned residual plot
+library(arm)
+binnedplot(fitted_values, 
+           residuals, 
+           xlab = "Expected Values", 
+           ylab = "Average Residual", 
+           main = "Binned Residual Plot", 
+           cex.pts = 0.8, 
+           col.pts = 1, 
+           col.int = "gray")
+```
+
+```{r}
+# train the random forest model
+library(randomForest)
+library(caret)
+
+mtry = c(3, 4, 5)
+ntree_values <- c(125, 250)
+node_size <- c(3, 6, 9)
+
+# loop over ntree values to create models
+rf_models <- list()
+
+for (ntree in ntree_values) {
+    for (nodesize in node_size) {
+        rf_model <- train(
+          experienced_maori ~ ., 
+          data = df_processed, 
+          method = "rf", 
+          trControl = train_control, 
+          tuneGrid = expand.grid(mtry = mtry),
+          metric = "ROC",
+          ntree = ntree, 
+          nodesize = nodesize,
+          importance = TRUE 
+        )
+        
+        # store the model in a list
+        rf_models[[paste0("ntree_", ntree, "_nodesize_", nodesize)]] <- rf_model
+    }
+}
+```
+
+```{r}
+# iterate through the list of models to extract the results
+rf_results_list <- list()
+
+for (rf_model_name in names(rf_models)) {
+    current_rf_model <- rf_models[[rf_model_name]]
+    
+    # extract ROC, sensitivity, specificity for the current model
+    current_rf_roc <- current_rf_model$results$ROC  
+    current_rf_sens <- current_rf_model$results$Sens
+    current_rf_sensSD <- current_rf_model$results$SensSD
+    current_rf_spec <- current_rf_model$results$Spec  
+    current_rf_specSD <- current_rf_model$results$SpecSD
+    
+    # extract mtry, ntree, nodesize for the current model
+    current_rf_mtry <- current_rf_model$results$mtry
+    current_rf_ntree <- current_rf_model$dots$ntree
+    current_rf_nodesize <- current_rf_model$dots$nodesize 
+    
+    # Store results in the list without filtering for max
+    rf_results_list[[rf_model_name]] <- data.frame(
+        mtry = current_rf_mtry,
+        ntree = current_rf_ntree,
+        nodesize = current_rf_nodesize,
+        ROC = current_rf_roc,
+        Sens = current_rf_sens,
+        Spec = current_rf_spec,
+        SensSD = current_rf_sensSD,
+        SpecSD = current_rf_specSD
+    )
+}
+```
+
+```{r}
+rf_results_df <- do.call(rbind, rf_results_list)
+```
+
+```{r}
+rf_results_df %>% 
+  arrange(desc(ROC))
+```
+
+```{r}
+# plot feature importance for the best rf model
+best_rf_model <- rf_models[["ntree_250_nodesize_3"]]
+importance <- varImp(best_rf_model, scale = FALSE)
+plot(importance, main = "Variable Importance for Random Forest")
+```
+

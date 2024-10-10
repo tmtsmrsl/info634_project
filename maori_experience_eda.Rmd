@@ -77,9 +77,6 @@ cultural activity.",
        x = "Count") +
   theme_minimal() 
 ```
-
-From 9849 response_id, 5899 of them did not experience any Maori cultural activity.
-
 Make a classification whether the respondent has experienced at least one Maori cultural activity
 
 ```{r}
@@ -232,7 +229,7 @@ for (col in cols) {
 }
 ```
 
-Seems like people who have difficulties in hearing, memory and walking are more likely to experience Maori culture. This is quite surprising, but perhaps people who don't have difficulties are more likely to prefer other activities.
+Seems like people who have difficulties in hearing, memory and walking are more likely to experience Maori culture (except for cannot do at all, which has very low value count). This is quite surprising, but perhaps people who don't have difficulties are more likely to prefer other activities.
 
 This dataset covers with whom the tourist travelled with. Note that the response_id could be duplicated.
 
@@ -296,7 +293,7 @@ for (col in travelled_cols) {
 }
 ```
 
-People who travel alone is less likely to experience Maori cultural activity, while people who travel with other adult (including partner and child over 15) is more likely to experience Maori cultural activity. Later we will group this into: 1. Travel alone (baseline) 2. Travel with child under 15 (OHE-column) 3. Travel with other adult (OHE-column)
+People who travel alone is less likely to experience Maori cultural activity, while people who travel with other adult (including partner, child over 15, and adult non-family) is more likely to experience Maori cultural activity. Later we will group this into: 1. Travel alone (baseline) 2. Travel with child under 15 (OHE-column) 3. Travel with other adult (OHE-column)
 
 This dataset contains the information if the tourist drive themselves in NZ
 
@@ -636,12 +633,8 @@ clean_df <- clean_df %>%
             travelled_with_partner, travelled_with_child_over_15))
 ```
 
-We can deduce travel_alone from the other two columns, so we will drop it
+We can deduce travel_alone from the other two columns, so we will drop it later when modelling.
 i.e. travel_alone will be 1 if both travel_with_child_under_15 and travel_with_other_above_15 are 0
-```{r}
-clean_df <- clean_df %>% 
-  select(-travelled_alone)
-```
 
 ```{r}
 clean_df %>% 
@@ -651,22 +644,25 @@ clean_df %>%
 ```
 Convert age to numerical by taking the middle number of the range.
 ```{r}
-age_map <- c("20 - 24" = 22, 
-             "25 - 29" = 27, 
-             "30 - 34" = 32,
-             "35 - 39" = 37,
-             "40 - 44" = 42,
-             "45 - 49" = 47,
-             "50 - 54" = 52,
-             "55 - 59" = 57,
-             "60 - 64" = 62,
-             "65 - 69" = 67,
-             "70 - 74" = 72,
-             "75 or older" = 77,
-             "Under 20" = 10)
-
-clean_df <- clean_df %>%
-  mutate(age_range = recode(age_range, !!!age_map))
+smh_df <- smh_df %>%
+  mutate(age_range = case_when(
+    # choose the middle number for the age ranges below
+    age_range == "20 - 24" ~ 22,
+    age_range == "25 - 29" ~ 27,
+    age_range == "30 - 34" ~ 32,
+    age_range == "35 - 39" ~ 37,
+    age_range == "40 - 44" ~ 42,
+    age_range == "45 - 49" ~ 47,
+    age_range == "50 - 54" ~ 52,
+    age_range == "55 - 59" ~ 57,
+    age_range == "60 - 64" ~ 62,
+    age_range == "65 - 69" ~ 67,
+    age_range == "70 - 74" ~ 72,
+    # choose a reasonable number for the age ranges below
+    age_range == "75 or older" ~ 77,
+    age_range == "Under 20" ~ 10,
+    TRUE ~ NA
+  ))
 ```
 
 ```{r}
@@ -693,6 +689,7 @@ clean_df <- clean_df %>%
                                    TRUE ~ NA)) 
 ```
 
+
 ```{r}
 clean_df <- clean_df %>% 
   select(-c(visited_ni, visited_si))
@@ -709,6 +706,22 @@ clean_df <- clean_df %>%
     country_of_residence_group == "Africa and Middle East" ~ "Africa and Middle East",
     TRUE ~ NA
   ))
+```
+
+```{r}
+clean_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  group_by(country_of_residence_group) %>% 
+  summarise(mean(experienced_maori, na.rm = TRUE),
+            count = n())
+```
+
+```{r}
+clean_df %>% 
+  mutate(experienced_maori = ifelse(experienced_maori == "Yes", 1, 0)) %>%
+  group_by(country_of_residence_group) %>% 
+  summarise(mean(experienced_maori, na.rm = TRUE),
+            count = n())
 ```
 
 ```{r}
